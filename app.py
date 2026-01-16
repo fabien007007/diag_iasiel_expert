@@ -325,24 +325,24 @@ def home():
 
 @app.post("/transcribe")
 async def transcribe(audio: UploadFile = File(...)):
+    import io
     from groq import Groq
     
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        return {{"text": "", "error": "GROQ_API_KEY manquante"}}
+        return {"text": "", "error": "GROQ_API_KEY manquante"}
     
     client = Groq(api_key=api_key)
-    
     audio_data = await audio.read()
     
     try:
         transcript = client.audio.transcriptions.create(
-            file=("audio.wav", audio_data),
+            file=("audio.webm", io.BytesIO(audio_data)),
             model="whisper-large-v3-turbo",
         )
-        return {{"text": transcript.text}}
+        return {"text": transcript.text}
     except Exception as e:
-        return {{"text": "", "error": str(e)}}
+        return {"text": "", "error": str(e)}
 
 
 @app.post("/transcribe")
