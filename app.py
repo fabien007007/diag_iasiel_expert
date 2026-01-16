@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import os
 import re
 import base64
@@ -171,6 +169,11 @@ def home():
     .btn {{ width: 100%; padding: 16px; border-radius: 12px; border: none; font-weight: bold; cursor: pointer; margin-top: 12px; }}
     .btn-main {{ background: linear-gradient(135deg, #38bdf8 0%, #2563eb 100%); color: white; }}
     .btn-photo {{ background: #334155; color: white; border: 1px dashed #64748b; }}
+    .btn-micro {{ background: #ec4899; color: white; border: none; }}
+    .btn-micro.recording {{ background: #dc2626; animation: pulse 1s infinite; }}
+    .btn-share {{ background: #10b981; color: white; border: none; }}
+    .btn-new {{ background: #8b5cf6; color: white; border: none; }}
+    @keyframes pulse {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: 0.5; }} }}
     textarea {{ width: 100%; height: 110px; background: #0f172a; border: 1px solid #334155; border-radius: 12px; color: white; padding: 12px; box-sizing: border-box; resize: none; font-size: 1rem; }}
     #preview {{ width: 100%; border-radius: 12px; display: none; margin: 15px 0; border: 2px solid #38bdf8; max-height: 300px; object-fit: cover; }}
     #loading {{ display: none; text-align: center; color: #38bdf8; font-weight: bold; padding: 20px; }}
@@ -180,6 +183,9 @@ def home():
     .s-web {{ border-left-color: #f472b6; background: #2c2e3e; }}
     .section-header {{ padding: 12px 15px; font-weight: bold; background: rgba(0,0,0,0.2); }}
     .section-body {{ padding: 15px; line-height: 1.6; font-size: 0.95rem; }}
+    .buttons-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }}
+    .buttons-row .btn {{ margin-top: 0; }}
+    #micro-status {{ text-align: center; color: #ec4899; font-size: 0.9rem; margin-top: 5px; }}
   </style>
 </head>
 <body>
@@ -189,12 +195,22 @@ def home():
   <button class="btn btn-photo" onclick="document.getElementById('in').click()">📷 PHOTO PRODUIT / PANNE</button>
   <input type="file" id="in" accept="image/*" capture="environment" hidden onchange="pv(this)">
   <textarea id="desc" placeholder="Décrivez le problème technique..."></textarea>
+  <div id="micro-status"></div>
+  <div class="buttons-row">
+    <button class="btn btn-micro" id="microBtn" onclick="toggleMicro()">🎤 MICRO</button>
+    <button class="btn btn-new" onclick="newScan()">🔄 NOUVEAU SCAN</button>
+  </div>
   <button id="go" class="btn btn-main" onclick="run()">⚡ LANCER LE DIAGNOSTIC</button>
   <div id="loading">📡 Analyse Groq + Recherche Web...</div>
   <div id="result"></div>
+  <button class="btn btn-share" id="shareBtn" style="display:none;" onclick="shareDocument()">📤 PARTAGER</button>
 </div>
 <script>
   let file = null;
+  let mediaRecorder = null;
+  let audioChunks = [];
+  let isRecording = false;
+
   function pv(i) {{
     file = i.files[0];
     const r = new FileReader();
@@ -204,6 +220,65 @@ def home():
     }};
     r.readAsDataURL(file);
   }}
+
+  async function toggleMicro() {{
+    const microBtn = document.getElementById('microBtn');
+    const status = document.getElementById('micro-status');
+    
+    if (!isRecording) {{
+      try {{
+        const stream = await navigator.mediaDevices.getUserMedia({{ audio: true }});
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+        
+        mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+        mediaRecorder.onstop = async () => {{
+          const audioBlob = new Blob(audioChunks, {{ type: 'audio/wav' }});
+          await transcribeAudio(audioBlob);
+          stream.getTracks().forEach(t => t.stop());
+        }};
+        
+        mediaRecorder.start();
+        isRecording = true;
+        microBtn.classList.add('recording');
+        status.textContent = '🔴 Enregistrement en cours...';
+      }} catch (e) {{
+        status.textContent = '❌ Microphone non disponible';
+      }}
+    }} else {{
+      mediaRecorder.stop();
+      isRecording = false;
+      microBtn.classList.remove('recording');
+      status.textContent = '⏳ Transcription...';
+    }}
+  }}
+
+  async function transcribeAudio(audioBlob) {{
+    const fd = new FormData();
+    fd.append('audio', audioBlob);
+    
+    try {{
+      const r = await fetch('/transcribe', {{ method: 'POST', body: fd }});
+      const data = await r.json();
+      if (data.text) {{
+        document.getElementById('desc').value += (document.getElementById('desc').value ? ' ' : '') + data.text;
+        document.getElementById('micro-status').textContent = '✅ Transcription réussie';
+      }}
+    }} catch (e) {{
+      document.getElementById('micro-status').textContent = '❌ Erreur transcription';
+    }}
+  }}
+
+  function newScan() {{
+    document.getElementById('desc').value = '';
+    document.getElementById('preview').style.display = 'none';
+    document.getElementById('result').innerHTML = '';
+    document.getElementById('shareBtn').style.display = 'none';
+    document.getElementById('micro-status').textContent = '';
+    file = null;
+    document.getElementById('in').value = '';
+  }}
+
   async function run() {{
     const res = document.getElementById('result');
     const load = document.getElementById('loading');
@@ -216,10 +291,31 @@ def home():
       const r = await fetch('/diagnostic', {{ method: 'POST', body: fd }});
       const html = await r.text();
       res.innerHTML = html;
+      document.getElementById('shareBtn').style.display = 'block';
     }} catch (e) {{
       res.innerHTML = '<div class="diag-section s-secu"><div class="section-header">❌ Erreur serveur</div><div class="section-body">' + e.message + '</div></div>';
     }} finally {{
       load.style.display = 'none'; go.style.display = 'block';
+    }}
+  }}
+
+  function shareDocument() {{
+    const resultText = document.getElementById('result').innerText || '';
+    const desc = document.getElementById('desc').value;
+    const content = `DIAGNOSTIC GRIESSER EXPERT AI\n\nProblème:\n${{desc}}\n\nRésultat:\n${{resultText}}`;
+    
+    if (navigator.share) {{
+      navigator.share({{
+        title: '{NOM_PROJET}',
+        text: content
+      }});
+    }} else {{
+      const blob = new Blob([content], {{ type: 'text/plain' }});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'diagnostic_griesser.txt';
+      a.click();
     }}
   }}
 </script>
@@ -227,7 +323,28 @@ def home():
 </html>"""
 
 
+@app.post("/transcribe")
+async def transcribe(audio: UploadFile = File(...)):
+    from groq import Groq
+    
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        return {{"text": "", "error": "GROQ_API_KEY manquante"}}
+    
+    client = Groq(api_key=api_key)
+    
+    audio_data = await audio.read()
+    
+    try:
+        transcript = client.audio.transcriptions.create(
+            file=("audio.wav", audio_data),
+            model="whisper-large-v3-turbo",
+        )
+        return {{"text": transcript.text}}
+    except Exception as e:
+        return {{"text": "", "error": str(e)}}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")), workers=1)
-
