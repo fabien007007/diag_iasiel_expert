@@ -1,16 +1,17 @@
 {
-  "name": "Griesser Expert AI",
-  "short_name": "Griesser",
-  "description": "Expert technique motorisation, KNX/DALI, appareillage",
+  "name": "Expert Électrique AI",
+  "short_name": "Expert Électrique",
+  "description": "Diagnostic électrique pour tous produits",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f172a",
-  "theme_color": "#1a5490",
+  "theme_color": "#38bdf8",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%231a5490' width='192' height='192'/><text x='96' y='120' font-size='100' font-weight='bold' fill='white' text-anchor='middle'>⚙️</text></svg>",
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%230f172a' width='192' height='192'/><text x='96' y='128' font-size='80' font-weight='bold' fill='%2338bdf8' text-anchor='middle'>⚡</text></svg>",
       "sizes": "192x192",
       "type": "image/svg+xml"
     }
   ]
 }
+
