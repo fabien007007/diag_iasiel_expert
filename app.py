@@ -153,6 +153,7 @@ async def analyze_with_groq(description: str, images_b64: list) -> str:
         model="meta-llama/llama-4-scout-17b-16e-instruct",
         temperature=0.2,
         max_tokens=1800,
+        timeout=25.0
     )
     return response.choices[0].message.content
 
