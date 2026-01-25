@@ -63,8 +63,7 @@ async def search_perplexity(query: str) -> str:
         if res.status_code == 200:
             return res.json()["choices"][0]["message"]["content"]
         return f"Erreur Perplexity: {res.status_code}"
-    except Exception as e:
-        print(f"[ERROR] Perplexity: {e}")
+    except Exception:
         return "Recherche web indisponible."
 
 
@@ -123,7 +122,7 @@ async def analyze_with_groq(description: str, images_b64: list) -> str:
     client = Groq(api_key=api_key)
 
     prompt_systeme = (
-        "Tu es un expert électricien certifié avec 20+ ans d'expérience. "
+        "Tu es un expert électricien expert certifié avec 20+ ans d'expérience. "
         "Diagnostic précis et factuel UNIQUEMENT sur base de normes officielles et données avérées. "
         "ZÉRO improvisation, ZÉRO créativité. "
         "Domaines : appareillage électrique, motorisation, domotique, tableaux électriques, câblage, variateurs, éclairage, automatismes. "
@@ -142,28 +141,20 @@ async def analyze_with_groq(description: str, images_b64: list) -> str:
     messages = [{"role": "system", "content": prompt_systeme}]
 
     user_content = [{"type": "text", "text": f"PROBLÈME DÉCRIT : {description}"}]
-    
-    print(f"[DEBUG] Ajout de {len(images_b64)} images à Groq")
-    for i, img_b64 in enumerate(images_b64):
-        print(f"[DEBUG] Image {i+1} size: {len(img_b64)} chars b64")
+    for img_b64 in images_b64:
         user_content.append(
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}", "detail": "high"}}
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
         )
 
     messages.append({"role": "user", "content": user_content})
 
-    try:
-        response = client.chat.completions.create(
-            messages=messages,
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            temperature=0.2,
-            max_tokens=1800,
-        )
-        print(f"[DEBUG] Réponse Groq reçue")
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"[ERROR] Groq: {e}")
-        return f"## ⚠️ Erreur Groq\n{str(e)}"
+    response = client.chat.completions.create(
+        messages=messages,
+        model="meta-llama/llama-4-scout-17b-16e-instruct",
+        temperature=0.2,
+        max_tokens=1800,
+    )
+    return response.choices[0].message.content
 
 
 @app.post("/diagnostic")
@@ -171,24 +162,16 @@ async def diagnostic(panne_description: str = Form(""), images: list = File(None
     images_b64 = []
     
     if images:
-        print(f"[DEBUG] Nombre d'images reçues: {len(images)}")
-        for idx, img in enumerate(images):
+        for img in images:
             try:
-                data = await img.read()
-                print(f"[DEBUG] Image {idx+1}: {len(data)} bytes")
-                images_b64.append(base64.b64encode(data).decode("utf-8"))
-            except Exception as e:
-                print(f"[ERROR] Image {idx+1}: {e}")
-    else:
-        print(f"[DEBUG] Aucune image reçue")
-    
-    print(f"[DEBUG] Total images b64 encodées: {len(images_b64)}")
+                images_b64.append(base64.b64encode(await img.read()).decode("utf-8"))
+            except:
+                pass
 
     analysis = await analyze_with_groq(panne_description, images_b64)
 
     web_info = ""
     if panne_description:
-        print(f"[DEBUG] Recherche Perplexity pour: {panne_description[:50]}...")
         web_info = await search_perplexity(f"Solution technique électrique pour: {panne_description}")
 
     return HTMLResponse(content=format_html_output(analysis, web_info))
@@ -408,3 +391,4 @@ def home():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")), workers=1)
+
