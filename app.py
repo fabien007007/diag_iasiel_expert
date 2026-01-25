@@ -138,24 +138,30 @@ async def analyze_with_groq(description: str, images_b64: list) -> str:
         "Pas de vague, pas d'approximation, pas de 'peut-être'."
     )
 
-    messages = [{"role": "system", "content": prompt_systeme}]
-
-    user_content = [{"type": "text", "text": f"PROBLÈME DÉCRIT : {description}"}]
-    for img_b64 in images_b64:
-        user_content.append(
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
-        )
-
+    if image and image.filename:
+        img_b64 = base64.b64encode(await image.read()).decode('utf-8')
+        user_content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
+        })
+    
     messages.append({"role": "user", "content": user_content})
 
-    response = client.chat.completions.create(
-        messages=messages,
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        temperature=0.2,
-        max_tokens=1800,
-        timeout=25.0
-    )
-    return response.choices[0].message.content
+    try:
+        # UTILISATION DU MODÈLE DE PRODUCTION STABLE LLAMA 4 SCOUT
+        response = client.chat.completions.create(
+            messages=messages,
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            temperature=0.1
+        )
+        analysis = response.choices[0].message.content
+    except Exception as e:
+        analysis = f"## ⚠️ Erreur ## Problème avec le modèle Llama 4 Scout : {str(e)}"
+
+    web_query = f"Solution technique Somfy précise pour : {panne_description}. Matériel : {analysis[:100]}"
+    web_info = await search_perplexity(web_query)
+    
+    return HTMLResponse(content=format_html_output(analysis, web_info))
 
 
 @app.post("/diagnostic")
