@@ -181,7 +181,7 @@ def home():
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Expert Électrique AI</title>
+  <title>DIAG EXPERT IASIEL</title>
   <style>
     body { font-family: Segoe UI, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 15px; }
     .card { background: #1e293b; max-width: 700px; margin: auto; padding: 20px; border-radius: 20px; border: 1px solid #334155; }
