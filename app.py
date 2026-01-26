@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
-NOM_PROJET = "Expert Électrique AI"
+NOM_PROJET = "DIAG ELEC IASIEL"
 
 app = FastAPI(title=NOM_PROJET, version="1.0.0")
 app.add_middleware(
@@ -112,7 +112,7 @@ def format_html_output(text: str, web_info: str = "") -> str:
     return html_res
 
 
-async def analyze_with_groq(description: str, images_b64: list) -> str:
+async def analyze_with_groq(description: str, image_b64: str) -> str:
     from groq import Groq
 
     api_key = os.environ.get("GROQ_API_KEY")
@@ -122,7 +122,7 @@ async def analyze_with_groq(description: str, images_b64: list) -> str:
     client = Groq(api_key=api_key)
 
     prompt_systeme = (
-        "Tu es un expert électricien expert certifié avec 20+ ans d'expérience. "
+        "Tu es un expert électricien certifié avec 20+ ans d'expérience. "
         "Diagnostic précis et factuel UNIQUEMENT sur base de normes officielles et données avérées. "
         "ZÉRO improvisation, ZÉRO créativité. "
         "Domaines : appareillage électrique, motorisation, domotique, tableaux électriques, câblage, variateurs, éclairage, automatismes. "
@@ -138,44 +138,34 @@ async def analyze_with_groq(description: str, images_b64: list) -> str:
         "Pas de vague, pas d'approximation, pas de 'peut-être'."
     )
 
-    if image and image.filename:
-        img_b64 = base64.b64encode(await image.read()).decode('utf-8')
-        user_content.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
-        })
+    messages = [{"role": "system", "content": prompt_systeme}]
+
+    user_content = [{"type": "text", "text": f"PROBLÈME DÉCRIT : {description}"}]
     
+    if image_b64:
+        user_content.append(
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}}
+        )
+
     messages.append({"role": "user", "content": user_content})
 
-    try:
-        # UTILISATION DU MODÈLE DE PRODUCTION STABLE LLAMA 4 SCOUT
-        response = client.chat.completions.create(
-            messages=messages,
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            temperature=0.1
-        )
-        analysis = response.choices[0].message.content
-    except Exception as e:
-        analysis = f"## ⚠️ Erreur ## Problème avec le modèle Llama 4 Scout : {str(e)}"
-
-    web_query = f"Solution technique Somfy précise pour : {panne_description}. Matériel : {analysis[:100]}"
-    web_info = await search_perplexity(web_query)
-    
-    return HTMLResponse(content=format_html_output(analysis, web_info))
+    response = client.chat.completions.create(
+        messages=messages,
+        model="meta-llama/llama-4-scout-17b-16e-instruct",
+        temperature=0.2,
+        max_tokens=1800,
+    )
+    return response.choices[0].message.content
 
 
 @app.post("/diagnostic")
-async def diagnostic(panne_description: str = Form(""), images: list = File(None)):
-    images_b64 = []
+async def diagnostic(panne_description: str = Form(""), image: UploadFile = File(None)):
+    image_b64 = ""
     
-    if images:
-        for img in images:
-            try:
-                images_b64.append(base64.b64encode(await img.read()).decode("utf-8"))
-            except:
-                pass
+    if image and image.filename:
+        image_b64 = base64.b64encode(await image.read()).decode("utf-8")
 
-    analysis = await analyze_with_groq(panne_description, images_b64)
+    analysis = await analyze_with_groq(panne_description, image_b64)
 
     web_info = ""
     if panne_description:
@@ -203,10 +193,6 @@ def home():
     .btn-micro { background: #ec4899; color: white; }
     .btn-qr { background: #10b981; color: white; }
     .btn-photo { width: 100%; background: #334155; color: white; border: 1px dashed #64748b; margin-top: 12px; }
-    .photo-gallery { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
-    .photo-item { position: relative; width: 80px; height: 80px; border-radius: 8px; border: 2px solid #38bdf8; overflow: hidden; }
-    .photo-item img { width: 100%; height: 100%; object-fit: cover; }
-    .photo-item .remove { position: absolute; top: 2px; right: 2px; background: #ef4444; color: white; border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; font-size: 12px; }
     textarea { width: 100%; height: 110px; background: #0f172a; border: 1px solid #334155; border-radius: 12px; color: white; padding: 12px; box-sizing: border-box; resize: none; font-size: 1rem; margin-top: 12px; }
     #loading { display: none; text-align: center; color: #38bdf8; font-weight: bold; padding: 20px; }
     .diag-section { background: #334155; border-radius: 12px; margin-top: 15px; border-left: 4px solid #94a3b8; overflow: hidden; }
@@ -216,14 +202,15 @@ def home():
     .section-header { padding: 12px 15px; font-weight: bold; background: rgba(0,0,0,0.2); }
     .section-body { padding: 15px; line-height: 1.6; font-size: 0.95rem; }
     #qr-scanner { display: none; width: 100%; height: 300px; border-radius: 12px; margin: 12px 0; border: 2px solid #38bdf8; background: #0f172a; }
+    #preview { display: none; width: 100%; max-height: 300px; margin: 15px 0; border-radius: 12px; border: 2px solid #38bdf8; }
   </style>
 </head>
 <body>
 <div class="card">
   <h1>Expert Électrique AI</h1>
-  <button class="btn btn-photo" onclick="document.getElementById('photo-input').click()">📷 AJOUTER PHOTOS</button>
-  <input type="file" id="photo-input" accept="image/*" capture="environment" multiple hidden onchange="handleMultiplePhotos(this)">
-  <div class="photo-gallery" id="photo-gallery"></div>
+  <button class="btn btn-photo" onclick="document.getElementById('photo-input').click()">📷 AJOUTER PHOTO</button>
+  <input type="file" id="photo-input" accept="image/*" capture="environment" hidden onchange="previewPhoto(this)">
+  <img id="preview">
   
   <div class="btn-row">
     <button class="btn btn-micro" onclick="startMicro()">🔤 MICRO</button>
@@ -240,39 +227,21 @@ def home():
 
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script>
-  let photos = [];
+  let selectedFile = null;
   let recognition = null;
   let isListening = false;
   let qrActive = false;
   let qrStream = null;
 
-  function handleMultiplePhotos(input) {
-    const files = Array.from(input.files || []);
-    files.forEach(file => {
-      const r = new FileReader();
-      r.onload = (e) => {
-        const photoId = Date.now() + Math.random();
-        photos.push({ id: photoId, data: e.target.result });
-        renderPhotos();
-      };
-      r.readAsDataURL(file);
-    });
-  }
-
-  function renderPhotos() {
-    const gallery = document.getElementById('photo-gallery');
-    gallery.innerHTML = '';
-    photos.forEach(photo => {
-      const div = document.createElement('div');
-      div.className = 'photo-item';
-      div.innerHTML = `<img src="${photo.data}"><button class="remove" onclick="removePhoto(${photo.id})">✕</button>`;
-      gallery.appendChild(div);
-    });
-  }
-
-  function removePhoto(photoId) {
-    photos = photos.filter(p => p.id !== photoId);
-    renderPhotos();
+  function previewPhoto(input) {
+    selectedFile = input.files[0];
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const preview = document.getElementById('preview');
+      preview.src = e.target.result;
+      preview.style.display = 'block';
+    };
+    reader.readAsDataURL(selectedFile);
   }
 
   function startMicro() {
@@ -367,16 +336,9 @@ def home():
     res.innerHTML = "";
     
     const fd = new FormData();
-    photos.forEach(photo => {
-      const arr = photo.data.split(',');
-      const mime = arr[0].match(/:(.*?);/)[1];
-      const bstr = atob(arr[1]);
-      const n = bstr.length;
-      const u8arr = new Uint8Array(n);
-      for(let i=0; i<n; i++) u8arr[i] = bstr.charCodeAt(i);
-      const blob = new Blob([u8arr], { type: mime });
-      fd.append('images', blob, 'photo.jpg');
-    });
+    if (selectedFile) {
+      fd.append('image', selectedFile);
+    }
     fd.append('panne_description', document.getElementById('desc').value);
     
     try {
@@ -398,4 +360,3 @@ def home():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")), workers=1)
-
