@@ -40,6 +40,15 @@ async def get_manifest():
 @app.get("/sw.js")
 async def get_sw():
     return FileResponse("sw.js", media_type="application/javascript")
+@app.get("/debug-env")
+
+async def debug_env():
+    return {
+        "active_llm": ACTIVE_LLM,
+        "env_key": LLM_CONFIG["env_key"],
+        "groq_api_key_present": bool(GROQ_API_KEY),
+        "groq_api_key_prefix": GROQ_API_KEY[:8] if GROQ_API_KEY else None,
+    }
 
 async def search_perplexity(query: str) -> str:
     api_key = GROQ_API_KEY
@@ -344,3 +353,4 @@ async def diagnostic(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
