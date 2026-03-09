@@ -21,6 +21,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+LLM_CONFIGS = {
+    "scout": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "model": "openai/gpt-oss-120b",
+        "env_key": "GROQ_API_KEY",
+        "timeout": 60,
+    }
+}
+ACTIVE_LLM = "scout"
+LLM_CONFIG = LLM_CONFIGS[ACTIVE_LLM]
+GROQ_API_KEY = os.getenv(LLM_CONFIG["env_key"])
+
 @app.get("/manifest.json")
 async def get_manifest():
     return FileResponse("manifest.json")
@@ -29,16 +41,15 @@ async def get_manifest():
 async def get_sw():
     return FileResponse("sw.js", media_type="application/javascript")
 
-
 async def search_perplexity(query: str) -> str:
-    api_key = os.environ.get("PERPLEXITY_API_KEY")
+    api_key = GROQ_API_KEY
     if not api_key:
         return ""
 
-    url = "https://api.perplexity.ai/chat/completions"
+    url = LLM_CONFIG["url"]
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     data = {
-        "model": "sonar-pro",
+        "model": LLM_CONFIG["model"],
         "messages": [
             {
                 "role": "system",
@@ -59,13 +70,12 @@ async def search_perplexity(query: str) -> str:
     }
 
     try:
-        res = requests.post(url, json=data, headers=headers, timeout=25.0)
+        res = requests.post(url, json=data, headers=headers, timeout=LLM_CONFIG["timeout"])
         if res.status_code == 200:
             return res.json()["choices"][0]["message"]["content"]
         return f"Erreur Perplexity: {res.status_code}"
     except Exception:
         return "Recherche web indisponible."
-
 
 def format_html_output(text: str, web_info: str = "") -> str:
     clean = text.replace("**", "").replace("###", "##")
@@ -78,7 +88,7 @@ def format_html_output(text: str, web_info: str = "") -> str:
             continue
         lines = c.split("\n")
         title = lines[0].strip()
-        body = "<br>".join(lines[1:]).strip()
+        body = "\n".join(lines[1:]).strip()
 
         css = "diag-section"
         icon = "⚙️"
@@ -94,269 +104,244 @@ def format_html_output(text: str, web_info: str = "") -> str:
             icon, css = "⚡", "diag-section s-secu"
 
         html_res += (
-            f"<div class='{css}'>"
-            f"<div class='section-header'>{icon} {title}</div>"
-            f"<div class='section-body'>{body}</div>"
-            f"</div>"
+            f"<section class='{css}'>"
+            f"<h3><span>{icon}</span>{title}</h3>"
+            f"<div>{body.replace(chr(10), '<br>')}</div>"
+            f"</section>"
         )
 
-    if web_info:
-        web_body = web_info.replace("**", "<b>").replace("\n", "<br>")
+    if web_info.strip():
         html_res += (
-            "<div class='diag-section s-web'>"
-            "<div class='section-header'>🌐 SOLUTIONS WEB TEMPS RÉEL</div>"
-            f"<div class='section-body'>{web_body}</div>"
-            "</div>"
+            "<section class='diag-section s-web'>"
+            "<h3><span>🌐</span>Recherche Web</h3>"
+            f"<div>{web_info.replace(chr(10), '<br>')}</div>"
+            "</section>"
         )
 
     return html_res
 
-
-async def analyze_with_groq(description: str, image_b64: str) -> str:
-    from groq import Groq
-
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        return "## ⚠️ Erreur\nGROQ_API_KEY manquante dans .env"
-
-    client = Groq(api_key=api_key)
-
-    prompt_systeme = (
-        "Tu es un expert électricien certifié avec 20+ ans d'expérience. "
-        "Diagnostic précis et factuel UNIQUEMENT sur base de normes officielles et données avérées. "
-        "ZÉRO improvisation, ZÉRO créativité. "
-        "Domaines : appareillage électrique, motorisation, domotique, tableaux électriques, câblage, variateurs, éclairage, automatismes. "
-        "Tous fabricants : Legrand, Griesser, Came, BTF, Hager, Yoki, Schneider Electric, Siemens, ABB, Merlin Gerin. "
-        "Respect strict : NF C 15-100, IEC 60364, réglementations sécurité, efficacité énergétique. "
-        "STRUCTURE OBLIGATOIRE (Markdown avec ##):\n"
-        "## 🆔 Identification précise\n"
-        "## 🔍 Analyse visuelle et technique\n"
-        "## 🛠️ Correction étape par étape\n"
-        "## 📦 Compatibilité produits / marques\n"
-        "## ⚡ Sécurité / Normes\n"
-        "Sources : documentation constructeurs, normes NF/IEC officielles. "
-        "Pas de vague, pas d'approximation, pas de 'peut-être'."
-    )
-
-    messages = [{"role": "system", "content": prompt_systeme}]
-
-    user_content = [{"type": "text", "text": f"PROBLÈME DÉCRIT : {description}"}]
-    
-    if image_b64:
-        user_content.append(
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}}
-        )
-
-    messages.append({"role": "user", "content": user_content})
-
-    response = client.chat.completions.create(
-        messages=messages,
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        temperature=0.2,
-        max_tokens=1800,
-    )
-    return response.choices[0].message.content
-
-
-@app.post("/diagnostic")
-async def diagnostic(panne_description: str = Form(""), image: UploadFile = File(None)):
-    image_b64 = ""
-    
-    if image and image.filename:
-        image_b64 = base64.b64encode(await image.read()).decode("utf-8")
-
-    analysis = await analyze_with_groq(panne_description, image_b64)
-
-    web_info = ""
-    if panne_description:
-        web_info = await search_perplexity(f"Solution technique électrique pour: {panne_description}")
-
-    return HTMLResponse(content=format_html_output(analysis, web_info))
-
-
 @app.get("/", response_class=HTMLResponse)
-def home():
-    return """<!DOCTYPE html>
+async def home():
+    return """
+<!doctype html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DIAG EXPERT IASIEL</title>
-  <style>
-    body { font-family: Segoe UI, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 15px; }
-    .card { background: #1e293b; max-width: 700px; margin: auto; padding: 20px; border-radius: 20px; border: 1px solid #334155; }
-    h1 { color: #38bdf8; text-align: center; font-size: 1.2rem; text-transform: uppercase; margin-bottom: 15px; }
-    .btn { padding: 16px; border-radius: 12px; border: none; font-weight: bold; cursor: pointer; margin-top: 12px; }
-    .btn-main { width: 100%; background: linear-gradient(135deg, #38bdf8 0%, #2563eb 100%); color: white; }
-    .btn-row { display: flex; gap: 12px; margin-top: 12px; }
-    .btn-row .btn { flex: 1; margin-top: 0; }
-    .btn-micro { background: #ec4899; color: white; }
-    .btn-qr { background: #10b981; color: white; }
-    .btn-photo { width: 100%; background: #334155; color: white; border: 1px dashed #64748b; margin-top: 12px; }
-    textarea { width: 100%; height: 110px; background: #0f172a; border: 1px solid #334155; border-radius: 12px; color: white; padding: 12px; box-sizing: border-box; resize: none; font-size: 1rem; margin-top: 12px; }
-    #loading { display: none; text-align: center; color: #38bdf8; font-weight: bold; padding: 20px; }
-    .diag-section { background: #334155; border-radius: 12px; margin-top: 15px; border-left: 4px solid #94a3b8; overflow: hidden; }
-    .s-id { border-left-color: #38bdf8; } .s-analyse { border-left-color: #fbbf24; }
-    .s-fix { border-left-color: #22c55e; } .s-secu { border-left-color: #ef4444; }
-    .s-web { border-left-color: #f472b6; background: #2c2e3e; }
-    .section-header { padding: 12px 15px; font-weight: bold; background: rgba(0,0,0,0.2); }
-    .section-body { padding: 15px; line-height: 1.6; font-size: 0.95rem; }
-    #qr-scanner { display: none; width: 100%; height: 300px; border-radius: 12px; margin: 12px 0; border: 2px solid #38bdf8; background: #0f172a; }
-    #preview { display: none; width: 100%; max-height: 300px; margin: 15px 0; border-radius: 12px; border: 2px solid #38bdf8; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DIAG ELEC IASIEL</title>
+<style>
+:root{
+  --bg:#0b1220;
+  --card:#131c31;
+  --text:#e8eefc;
+  --muted:#9fb0d3;
+  --line:#263352;
+  --acc:#4da3ff;
+  --ok:#32d296;
+  --warn:#ffb84d;
+  --danger:#ff6b6b;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+  background:linear-gradient(180deg,#0a1020,#0e1730 40%,#0b1220);
+  color:var(--text);
+}
+.wrap{max-width:1100px;margin:0 auto;padding:24px}
+.top{
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  margin-bottom:20px
+}
+.brand{display:flex;align-items:center;gap:14px}
+.logo{
+  width:56px;height:56px;border-radius:14px;
+  background:linear-gradient(135deg,#4da3ff,#6df0c2);
+  display:grid;place-items:center;color:#03111f;font-size:26px;font-weight:800
+}
+h1{margin:0;font-size:28px}
+.sub{color:var(--muted);margin-top:4px}
+.grid{display:grid;grid-template-columns:1.2fr .8fr;gap:18px}
+.card{
+  background:rgba(19,28,49,.88);
+  border:1px solid var(--line);
+  border-radius:20px;
+  box-shadow:0 10px 30px rgba(0,0,0,.25);
+}
+.pad{padding:18px}
+label{display:block;margin:10px 0 8px;color:#c6d4f7;font-weight:600}
+textarea,input{
+  width:100%;border:1px solid #33456e;background:#0d1630;color:var(--text);
+  border-radius:14px;padding:14px 14px;font-size:15px;outline:none
+}
+textarea{min-height:170px;resize:vertical}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+button{
+  border:0;border-radius:14px;padding:12px 16px;font-weight:700;cursor:pointer
+}
+.btn{
+  background:linear-gradient(135deg,#4da3ff,#2b7de9);color:white
+}
+.btn2{
+  background:#182544;color:#dbe7ff;border:1px solid #32456f
+}
+.muted{color:var(--muted);font-size:13px}
+.status{
+  margin-top:12px;padding:10px 12px;border-radius:12px;background:#0d1630;border:1px solid #25365b;
+  color:#cfe0ff
+}
+.preview{
+  display:flex;align-items:center;justify-content:center;
+  min-height:240px;border:1px dashed #355083;border-radius:16px;background:#0d1630;overflow:hidden
+}
+.preview img{max-width:100%;display:block}
+.diag-section{
+  background:#0d1630;border:1px solid #263a60;border-radius:16px;padding:14px 14px;margin:12px 0
+}
+.diag-section h3{
+  margin:0 0 8px 0;font-size:18px;display:flex;align-items:center;gap:10px
+}
+.s-id{border-color:#2e5b98}
+.s-analyse{border-color:#7b5cff}
+.s-fix{border-color:#17a673}
+.s-secu{border-color:#ff9f43}
+.s-web{border-color:#4da3ff}
+.out{
+  line-height:1.55;color:#eaf1ff;white-space:normal;word-break:break-word
+}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.badge{
+  padding:7px 10px;border-radius:999px;background:#0d1630;border:1px solid #31456f;color:#d9e7ff;font-size:12px
+}
+@media (max-width:900px){.grid{grid-template-columns:1fr}}
+</style>
 </head>
 <body>
-<div class="card">
-  <h1>Expert Électrique AI</h1>
-  <button class="btn btn-photo" onclick="document.getElementById('photo-input').click()">📷 AJOUTER PHOTO</button>
-  <input type="file" id="photo-input" accept="image/*" capture="environment" hidden onchange="previewPhoto(this)">
-  <img id="preview">
-  
-  <div class="btn-row">
-    <button class="btn btn-micro" onclick="startMicro()">🔤 MICRO</button>
-    <button class="btn btn-qr" onclick="toggleQRScanner()">📱 QR CODE</button>
+<div class="wrap">
+  <div class="top">
+    <div class="brand">
+      <div class="logo">⚡</div>
+      <div>
+        <h1>DIAG ELEC IASIEL</h1>
+        <div class="sub">Diagnostic technique électrique assisté par IA</div>
+      </div>
+    </div>
+    <div class="badges">
+      <div class="badge">NF C 15-100</div>
+      <div class="badge">IEC 60364</div>
+      <div class="badge">Analyse image + texte</div>
+    </div>
   </div>
-  
-  <div id="qr-scanner"></div>
-  
-  <textarea id="desc" placeholder="Décrivez le problème technique..."></textarea>
-  <button id="go" class="btn btn-main" onclick="run()">⚡ LANCER LE DIAGNOSTIC</button>
-  <div id="loading">📡 Analyse Groq + Recherche Web...</div>
-  <div id="result"></div>
+
+  <div class="grid">
+    <div class="card pad">
+      <label for="question">Décrivez le problème</label>
+      <textarea id="question" placeholder="Ex: Identifier ce variateur, analyser le câblage visible, proposer les corrections conformes et vérifier la compatibilité avec Legrand/Hager..."></textarea>
+
+      <label for="image">Ajoutez une photo</label>
+      <input id="image" type="file" accept="image/*">
+
+      <div class="actions">
+        <button class="btn" onclick="runDiag()">Lancer le diagnostic</button>
+        <button class="btn2" onclick="resetAll()">Réinitialiser</button>
+      </div>
+      <div class="status" id="status">Prêt.</div>
+    </div>
+
+    <div class="card pad">
+      <label>Aperçu image</label>
+      <div class="preview" id="preview">Aucune image sélectionnée</div>
+    </div>
+  </div>
+
+  <div class="card pad" style="margin-top:18px">
+    <label>Résultat</label>
+    <div id="result" class="out"></div>
+  </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script>
-  let selectedFile = null;
-  let recognition = null;
-  let isListening = false;
-  let qrActive = false;
-  let qrStream = null;
+const imageInput = document.getElementById('image');
+const preview = document.getElementById('preview');
+imageInput.addEventListener('change', () => {
+  const file = imageInput.files && imageInput.files[0];
+  if (!file) {
+    preview.innerHTML = 'Aucune image sélectionnée';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    preview.innerHTML = `<img alt="preview" src="${e.target.result}">`;
+  };
+  reader.readAsDataURL(file);
+});
 
-  function previewPhoto(input) {
-    selectedFile = input.files[0];
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const preview = document.getElementById('preview');
-      preview.src = e.target.result;
-      preview.style.display = 'block';
-    };
-    reader.readAsDataURL(selectedFile);
+function setStatus(msg){ document.getElementById('status').textContent = msg; }
+
+function resetAll(){
+  document.getElementById('question').value = '';
+  document.getElementById('image').value = '';
+  document.getElementById('result').innerHTML = '';
+  preview.innerHTML = 'Aucune image sélectionnée';
+  setStatus('Prêt.');
+}
+
+async function runDiag(){
+  const q = document.getElementById('question').value.trim();
+  const file = document.getElementById('image').files[0];
+  const result = document.getElementById('result');
+
+  if (!q && !file){
+    setStatus('Ajoutez une description ou une image.');
+    return;
   }
 
-  function startMicro() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert('Reconnaissance vocale non supportée');
-      return;
-    }
-    
-    if (!recognition) {
-      recognition = new SpeechRecognition();
-      recognition.lang = 'fr-FR';
-      recognition.onstart = () => { isListening = true; };
-      recognition.onend = () => { isListening = false; };
-      recognition.onresult = (e) => {
-        let transcript = '';
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          transcript += e.results[i][0].transcript;
-        }
-        document.getElementById('desc').value += (document.getElementById('desc').value ? ' ' : '') + transcript;
-      };
-      recognition.onerror = () => { alert('Erreur reconnaissance vocale'); };
-    }
-    
-    if (isListening) {
-      recognition.stop();
-    } else {
-      recognition.start();
-    }
+  const fd = new FormData();
+  fd.append('question', q);
+  if (file) fd.append('image', file);
+
+  setStatus('Analyse en cours...');
+  result.innerHTML = '';
+
+  try{
+    const res = await fetch('/diagnostic', { method:'POST', body:fd });
+    const html = await res.text();
+    result.innerHTML = html;
+    setStatus('Diagnostic terminé.');
+  }catch(e){
+    result.innerHTML = "<div class='diag-section s-secu'><h3><span>⚠️</span>Erreur</h3><div>Impossible d'obtenir le diagnostic.</div></div>";
+    setStatus('Erreur réseau.');
   }
-
-  function toggleQRScanner() {
-    const scanner = document.getElementById('qr-scanner');
-    if (qrActive) {
-      if (qrStream) {
-        qrStream.getTracks().forEach(track => track.stop());
-      }
-      scanner.style.display = 'none';
-      qrActive = false;
-    } else {
-      scanner.style.display = 'block';
-      qrActive = true;
-      startQRScanner();
-    }
-  }
-
-  function startQRScanner() {
-    const scanner = document.getElementById('qr-scanner');
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then(stream => {
-      qrStream = stream;
-      const video = document.createElement('video');
-      video.srcObject = stream;
-      video.style.width = '100%';
-      video.style.height = '100%';
-      video.style.borderRadius = '12px';
-      video.play();
-      scanner.innerHTML = '';
-      scanner.appendChild(video);
-
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-
-      function scanQR() {
-        if (video.readyState === video.HAVE_ENOUGH_DATA) {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          ctx.drawImage(video, 0, 0);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = jsQR(imageData.data, imageData.width, imageData.height);
-          if (code) {
-            document.getElementById('desc').value += (document.getElementById('desc').value ? ' ' : '') + 'QR: ' + code.data;
-            toggleQRScanner();
-            return;
-          }
-        }
-        requestAnimationFrame(scanQR);
-      }
-      scanQR();
-    }).catch(err => {
-      alert('Accès caméra refusé: ' + err.message);
-      qrActive = false;
-      scanner.style.display = 'none';
-    });
-  }
-
-  async function run() {
-    const res = document.getElementById('result');
-    const load = document.getElementById('loading');
-    const go = document.getElementById('go');
-    go.style.display = 'none';
-    load.style.display = 'block';
-    res.innerHTML = "";
-    
-    const fd = new FormData();
-    if (selectedFile) {
-      fd.append('image', selectedFile);
-    }
-    fd.append('panne_description', document.getElementById('desc').value);
-    
-    try {
-      const r = await fetch('/diagnostic', { method: 'POST', body: fd });
-      const html = await r.text();
-      res.innerHTML = html;
-    } catch (e) {
-      res.innerHTML = '<div class="diag-section s-secu"><div class="section-header">❌ Erreur serveur</div><div class="section-body">' + e.message + '</div></div>';
-    } finally {
-      load.style.display = 'none';
-      go.style.display = 'block';
-    }
-  }
+}
 </script>
 </body>
-</html>"""
+</html>
+"""
 
+@app.post("/diagnostic", response_class=HTMLResponse)
+async def diagnostic(
+    question: str = Form(""),
+    image: UploadFile = File(None),
+):
+    prompt_parts = []
+    if question.strip():
+        prompt_parts.append(f"Question utilisateur :\n{question.strip()}")
+
+    if image is not None:
+        content = await image.read()
+        mime = image.content_type or "image/jpeg"
+        b64 = base64.b64encode(content).decode("utf-8")
+        prompt_parts.append(
+            "Image fournie (base64) :\n"
+            f"data:{mime};base64,{b64}\n"
+            "Analyse cette image en détail pour identifier les éléments techniques visibles."
+        )
+
+    final_prompt = "\n\n".join(prompt_parts).strip()
+    web_info = await search_perplexity(final_prompt)
+    return format_html_output(web_info)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")), workers=1)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
