@@ -27,11 +27,15 @@ LLM_CONFIGS = {
         "model": "openai/gpt-oss-120b",
         "env_key": "GROQ_API_KEY",
         "timeout": 60,
+    },
+    "scout": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+        "env_key": "GROQ_API_KEY",
+        "timeout": 60,
     }
 }
-ACTIVE_LLM = "oss"
-LLM_CONFIG = LLM_CONFIGS[ACTIVE_LLM]
-GROQ_API_KEY = os.getenv(LLM_CONFIG["env_key"])
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 @app.get("/manifest.json")
 async def get_manifest():
@@ -44,21 +48,20 @@ async def get_sw():
 @app.get("/debug-env")
 async def debug_env():
     return {
-        "active_llm": ACTIVE_LLM,
-        "env_key": LLM_CONFIG["env_key"],
+        "env_key": "GROQ_API_KEY",
         "groq_api_key_present": bool(GROQ_API_KEY),
         "groq_api_key_prefix": GROQ_API_KEY[:8] if GROQ_API_KEY else None,
     }
 
-async def search_groq(query: str) -> str:
+async def call_groq_text(query: str) -> str:
     api_key = GROQ_API_KEY
     if not api_key:
         return "Erreur: GROQ_API_KEY manquante sur le serveur."
 
-    url = LLM_CONFIG["url"]
+    llm_config = LLM_CONFIGS["oss"]
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     data = {
-        "model": LLM_CONFIG["model"],
+        "model": llm_config["model"],
         "messages": [
             {
                 "role": "system",
@@ -79,12 +82,54 @@ async def search_groq(query: str) -> str:
     }
 
     try:
-        res = requests.post(url, json=data, headers=headers, timeout=LLM_CONFIG["timeout"])
+        res = requests.post(llm_config["url"], json=data, headers=headers, timeout=llm_config["timeout"])
         if res.status_code == 200:
             return res.json()["choices"][0]["message"]["content"]
-        return f"Erreur Groq: {res.status_code}"
-    except Exception:
-        return "Service Groq indisponible."
+        return f"Erreur Groq: {res.status_code} - {res.text}"
+    except Exception as e:
+        return f"Service Groq indisponible: {str(e)}"
+
+async def call_groq_vision(query: str, image_data_url: str) -> str:
+    api_key = GROQ_API_KEY
+    if not api_key:
+        return "Erreur: GROQ_API_KEY manquante sur le serveur."
+
+    llm_config = LLM_CONFIGS["scout"]
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    data = {
+        "model": llm_config["model"],
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Tu es un expert technique électricien certifié avec 20+ ans d'expérience. "
+                    "Diagnostic précis et factuel UNIQUEMENT sur base de normes officielles et données avérées. "
+                    "ZÉRO improvisation, ZÉRO créativité. "
+                    "Domaines : appareillage électrique, motorisation, domotique, tableaux électriques, câblage, variateurs, éclairage, automatismes. "
+                    "Tous fabricants maîtrisés : Legrand, Griesser, Came, BTF, Hager, Yoki, Schneider Electric, Siemens, ABB, Merlin Gerin. "
+                    "Respect strict : NF C 15-100, IEC 60364, réglementations sécurité électrique, efficacité énergétique EU. "
+                    "Structure réponse OBLIGATOIRE en Markdown avec ## : identification produit, analyse technique, solutions étape par étape, compatibilité marques, normes sécurité. "
+                    "Sources : documentation constructeurs, normes NF/IEC officielles, retour terrain vérifiable. "
+                    "Pas de vague, pas d'approximation, pas de 'peut-être'."
+                ),
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": query},
+                    {"type": "image_url", "image_url": {"url": image_data_url}},
+                ],
+            },
+        ],
+    }
+
+    try:
+        res = requests.post(llm_config["url"], json=data, headers=headers, timeout=llm_config["timeout"])
+        if res.status_code == 200:
+            return res.json()["choices"][0]["message"]["content"]
+        return f"Erreur Groq: {res.status_code} - {res.text}"
+    except Exception as e:
+        return f"Service Groq indisponible: {str(e)}"
 
 def format_html_output(text: str, web_info: str = "") -> str:
     clean = text.replace("**", "").replace("###", "##")
@@ -332,23 +377,18 @@ async def diagnostic(
     question: str = Form(""),
     image: UploadFile = File(None),
 ):
-    prompt_parts = []
-    if question.strip():
-        prompt_parts.append(f"Question utilisateur :\n{question.strip()}")
-
     if image is not None:
         content = await image.read()
         mime = image.content_type or "image/jpeg"
         b64 = base64.b64encode(content).decode("utf-8")
-        prompt_parts.append(
-            "Image fournie (base64) :\n"
-            f"data:{mime};base64,{b64}\n"
-            "Analyse cette image en détail pour identifier les éléments techniques visibles."
-        )
+        image_data_url = f"data:{mime};base64,{b64}"
+        prompt = question.strip() if question.strip() else "Analyse cette image en détail pour identifier les éléments techniques visibles."
+        result = await call_groq_vision(prompt, image_data_url)
+        return format_html_output(result)
 
-    final_prompt = "\n\n".join(prompt_parts).strip()
-    web_info = await search_groq(final_prompt)
-    return format_html_output(web_info)
+    prompt = question.strip()
+    result = await call_groq_text(prompt)
+    return format_html_output(result)
 
 if __name__ == "__main__":
     import uvicorn
