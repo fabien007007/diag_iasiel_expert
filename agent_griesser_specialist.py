@@ -2,9 +2,9 @@ from groq import Groq
 
 def expertise_electrique(question: str, context: str = None) -> str:
     """Expert électricien polyvalent tous produits, toutes marques"""
-    
+
     client = Groq()
-    
+
     prompt_systeme = (
         "Tu es un expert électricien expert certifié avec 20+ ans d'expérience. "
         "Diagnostic précis et factuel UNIQUEMENT sur base de normes officielles et données avérées. "
@@ -21,22 +21,21 @@ def expertise_electrique(question: str, context: str = None) -> str:
         "Sources : documentation constructeurs, normes NF/IEC officielles. "
         "Pas de vague, pas d'approximation, pas de 'peut-être'."
     )
-    
+
     user_msg = question
     if context:
         user_msg = f"Contexte: {context}\n\nQuestion: {question}"
-    
+
     messages = [
-        {"role": "system", "content": prompt_system},
+        {"role": "system", "content": prompt_systeme},
         {"role": "user", "content": user_msg}
     ]
-    
+
     response = client.chat.completions.create(
         messages=messages,
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
+        model="openai/gpt-oss-120b",
         temperature=0.2,
         max_tokens=1500,
     )
-    
-    return response.choices[0].message.content
 
+    return response.choices[0].message.content
