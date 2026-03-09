@@ -40,8 +40,8 @@ async def get_manifest():
 @app.get("/sw.js")
 async def get_sw():
     return FileResponse("sw.js", media_type="application/javascript")
-@app.get("/debug-env")
 
+@app.get("/debug-env")
 async def debug_env():
     return {
         "active_llm": ACTIVE_LLM,
@@ -50,10 +50,10 @@ async def debug_env():
         "groq_api_key_prefix": GROQ_API_KEY[:8] if GROQ_API_KEY else None,
     }
 
-async def search_perplexity(query: str) -> str:
+async def search_groq(query: str) -> str:
     api_key = GROQ_API_KEY
     if not api_key:
-        return ""
+        return "Erreur: GROQ_API_KEY manquante sur le serveur."
 
     url = LLM_CONFIG["url"]
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -82,9 +82,9 @@ async def search_perplexity(query: str) -> str:
         res = requests.post(url, json=data, headers=headers, timeout=LLM_CONFIG["timeout"])
         if res.status_code == 200:
             return res.json()["choices"][0]["message"]["content"]
-        return f"Erreur Perplexity: {res.status_code}"
+        return f"Erreur Groq: {res.status_code}"
     except Exception:
-        return "Recherche web indisponible."
+        return "Service Groq indisponible."
 
 def format_html_output(text: str, web_info: str = "") -> str:
     clean = text.replace("**", "").replace("###", "##")
@@ -122,7 +122,7 @@ def format_html_output(text: str, web_info: str = "") -> str:
     if web_info.strip():
         html_res += (
             "<section class='diag-section s-web'>"
-            "<h3><span>🌐</span>Recherche Web</h3>"
+            "<h3><span>🌐</span>Réponse IA</h3>"
             f"<div>{web_info.replace(chr(10), '<br>')}</div>"
             "</section>"
         )
@@ -347,10 +347,9 @@ async def diagnostic(
         )
 
     final_prompt = "\n\n".join(prompt_parts).strip()
-    web_info = await search_perplexity(final_prompt)
+    web_info = await search_groq(final_prompt)
     return format_html_output(web_info)
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
