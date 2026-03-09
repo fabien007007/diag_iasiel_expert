@@ -22,14 +22,14 @@ app.add_middleware(
 )
 
 LLM_CONFIGS = {
-    "scout": {
+    "oss": {
         "url": "https://api.groq.com/openai/v1/chat/completions",
         "model": "openai/gpt-oss-120b",
         "env_key": "GROQ_API_KEY",
         "timeout": 60,
     }
 }
-ACTIVE_LLM = "scout"
+ACTIVE_LLM = "oss"
 LLM_CONFIG = LLM_CONFIGS[ACTIVE_LLM]
 GROQ_API_KEY = os.getenv(LLM_CONFIG["env_key"])
 
@@ -344,4 +344,3 @@ async def diagnostic(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
